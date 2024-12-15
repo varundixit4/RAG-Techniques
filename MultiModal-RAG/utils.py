@@ -21,27 +21,27 @@ def chunk_pdf(file_path):
         extract_image_block_to_payload=True,
 
         chunking_strategy="by_title",      
-        max_characters=5000,                 
-        combine_text_under_n_chars=1000,
-        new_after_n_chars=3000,
+        max_characters=10000,                 
+        combine_text_under_n_chars=2000,
+        new_after_n_chars=6000,
         )
     return chunks
 
 def separate_elements(chunks):
     """Segregates the chunks into Text, Tables and Images"""
-
     tables = []
     texts = []
-    images = []
 
     for chunk in chunks:
         if "Table" in str(type(chunk)):
             tables.append(chunk)
 
-        elif "CompositeElement" in str(type(chunk)):
+        if "CompositeElement" in str(type((chunk))):
             texts.append(chunk)
 
-        elif "CompositeElement" in str(type(chunk)):
+    images = []
+    for chunk in chunks:
+        if "CompositeElement" in str(type(chunk)):
             chunk_els = chunk.metadata.orig_elements
             for el in chunk_els:
                 if "Image" in str(type(el)):
@@ -49,29 +49,44 @@ def separate_elements(chunks):
     
     return texts, tables, images
 
-def summarise_chunks(texts, tables, images):
+def summarise_texts(texts, tables):
     """Summarise the chunks before storing them in the vector DB"""
-
     prompt_text = """
     You are an assistant tasked with summarizing tables and text.
     Give a concise summary of the table or text.
+
     Respond only with the summary, no additionnal comment.
     Do not start your message by saying "Here is a summary" or anything like that.
     Just give the summary as it is.
-    Table or text chunk: {element}
-    """
 
-    prompt_image = """
-    Describe the image in detail. For context,
-    the image can be a part of a research paper, or a magazine or a report. 
-    Be specific about graphs, such as bar plots.
+    Table or text chunk: {element}
+
     """
-    
+    prompt = ChatPromptTemplate.from_template(prompt_text)
+
+    model = ChatGoogleGenerativeAI(model="gemini-1.5-flash-8b")
+    summarize_chain = {"element": lambda x: x} | prompt | model | StrOutputParser()
+
+    # Summarize text
+    text_summaries = summarize_chain.batch(texts)
+
+    # Summarize tables
+    tables_html = [table.metadata.text_as_html for table in tables]
+    table_summaries = summarize_chain.batch(tables_html)
+
+    return text_summaries, table_summaries
+
+def summarise_images(images):
+    """Summarise the images before storing them in the vector DB"""
+    prompt_template = """Describe the image in detail. For context,
+                    the image is part of a research paper explaining the transformers
+                    architecture. Be specific about graphs, such as bar plots."""
+
     messages = [
         (
             "user",
             [
-                {"type": "text", "text": prompt_image},
+                {"type": "text", "text": prompt_template},
                 {
                     "type": "image_url",
                     "image_url": {"url": "data:image/jpeg;base64,{image}"},
@@ -80,37 +95,18 @@ def summarise_chunks(texts, tables, images):
         )
     ]
 
-    prompt_text = ChatPromptTemplate.from_template(prompt_text)
-    prompt_image = ChatPromptTemplate.from_messages(messages)
-
-
+    prompt = ChatPromptTemplate.from_messages(messages)
     model = ChatGoogleGenerativeAI(model="gemini-1.5-flash-8b")
-    text_chain = {"element": lambda x: x} | prompt_text | model | StrOutputParser()
-    image_chain = prompt_image | model | StrOutputParser()
+    chain = prompt | model | StrOutputParser()
 
-    # Summarize text
-    text_summaries = []
-    for text in texts:
-        text_summary = text_chain.invoke([text])
-        text_summaries.append(text_summary)
-        time.sleep(3)
-
-    # Summarize tables
-    tables_html = [table.metadata.text_as_html for table in tables]
-    table_summaries = []
-    for tables in tables_html:
-        table_summary = text_chain.invoke(tables)
-        table_summaries.append(table_summary)
-        time.sleep(3)
-
-    # Summarize images
     image_summaries = []
     for image in images:
-        image_summary = image_chain.invoke([image])
+        image_summary = chain.invoke([image])
         image_summaries.append(image_summary)
-        time.sleep(3)
+        time.sleep(5)
 
-    return text_summaries, table_summaries, image_summaries
+    return image_summaries
+    
 
 def ingest_chunks(id_key, retriever, texts, tables, images, text_summaries, table_summaries, image_summaries):
     """Ingest the chunks into document store and summaries into vector store"""
@@ -187,5 +183,3 @@ def build_prompt(kwargs):
             HumanMessage(content=prompt_content),
         ]
     )
-    
-
