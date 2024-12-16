@@ -64,15 +64,28 @@ def summarise_texts(texts, tables):
     """
     prompt = ChatPromptTemplate.from_template(prompt_text)
 
+    # Initialize the model
     model = ChatGoogleGenerativeAI(model="gemini-1.5-flash-8b")
     summarize_chain = {"element": lambda x: x} | prompt | model | StrOutputParser()
 
-    # Summarize text
-    text_summaries = summarize_chain.batch(texts)
+    # Summarize text in batches
+    text_summaries = []
+    for text_batch in texts:
+        try:
+            text_summaries.extend(summarize_chain.batch([text_batch]))
+        except Exception as e:
+            print(f"Error processing text batch: {e}")
+        time.sleep(2)
 
-    # Summarize tables
+    # Summarize tables in batches
     tables_html = [table.metadata.text_as_html for table in tables]
-    table_summaries = summarize_chain.batch(tables_html)
+    table_summaries = []
+    for table_batch in tables_html:
+        try:
+            table_summaries.extend(summarize_chain.batch([table_batch]))
+        except Exception as e:
+            print(f"Error processing table batch: {e}")
+        time.sleep(2)
 
     return text_summaries, table_summaries
 
